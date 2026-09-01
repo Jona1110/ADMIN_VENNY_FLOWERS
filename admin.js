@@ -1,8 +1,9 @@
 /* ==========================================================================
-   Lógica del Panel de Administración - Venny Flowers
+   Lógica del Panel de Administración - Optimizado con Caché Local
    ========================================================================== */
 
 const URL_GOOGLE_SCRIPT = "https://script.google.com/macros/s/AKfycbwy7qdPM56p_NT0VRM-f9QMGFD_9jxgCzOIzYcUKrFsOdDOd-ABwEGUjFvjpTRDHgCfSQ/exec";
+const ADMIN_CACHE_KEY = "venny_flowers_admin_cache";
 
 let datosGlobalesAdmin = {}; 
 let fechaCalendarioActual = new Date(); 
@@ -10,7 +11,7 @@ let chartIngresosInstance = null;
 let chartEstatusInstance = null;
 
 document.addEventListener('DOMContentLoaded', () => {
-    cargarDatosAdmin();
+    inicializarAdmin();
     document.getElementById('form-venta').addEventListener('submit', registrarVentaMostrador);
     
     const formNuevoProd = document.getElementById('form-nuevo-producto');
@@ -70,24 +71,41 @@ function cambiarTab(tabId) {
     if(tabId === 'pedidos') renderizarCalendario();
 }
 
-async function cargarDatosAdmin() {
-    document.getElementById('admin-content').classList.add('hidden');
-    document.getElementById('admin-loader').classList.remove('hidden');
+// 1. CARGA INICIAL CON CACHÉ (Apertura instantánea)
+function inicializarAdmin() {
+    const datosGuardados = localStorage.getItem(ADMIN_CACHE_KEY);
+    if (datosGuardados) {
+        try {
+            datosGlobalesAdmin = JSON.parse(datosGuardados);
+            renderizarTodo(datosGlobalesAdmin);
+            
+            document.getElementById('admin-loader').classList.add('hidden');
+            document.getElementById('admin-content').classList.remove('hidden');
+        } catch (e) { console.error("Error leyendo caché admin:", e); }
+    } else {
+        document.getElementById('admin-content').classList.add('hidden');
+        document.getElementById('admin-loader').classList.remove('hidden');
+    }
+    
+    // Sincronizar en segundo plano
+    cargarDatosAdmin();
+}
 
+async function cargarDatosAdmin(mostrarNotificacionExito = false) {
     try {
         const res = await fetch(`${URL_GOOGLE_SCRIPT}?accion=obtener_admin_data`);
         const json = await res.json();
 
         if (json.exito) {
             datosGlobalesAdmin = json.datos; 
-            renderizarDashboard(datosGlobalesAdmin);
-            renderizarPedidos(datosGlobalesAdmin.pedidos);
-            renderizarCalendario(); 
-            cambiarVistaInventario(); 
-            renderizarFinanzas(datosGlobalesAdmin.finanzas);
+            localStorage.setItem(ADMIN_CACHE_KEY, JSON.stringify(datosGlobalesAdmin));
+            
+            renderizarTodo(datosGlobalesAdmin);
             
             document.getElementById('admin-loader').classList.add('hidden');
             document.getElementById('admin-content').classList.remove('hidden');
+            
+            if (mostrarNotificacionExito) mostrarNotificacion("Datos sincronizados con éxito", 'exito');
         } else {
             document.getElementById('admin-loader').classList.add('hidden');
             document.getElementById('admin-content').classList.remove('hidden');
@@ -96,8 +114,16 @@ async function cargarDatosAdmin() {
     } catch (error) {
         document.getElementById('admin-loader').classList.add('hidden');
         document.getElementById('admin-content').classList.remove('hidden');
-        mostrarNotificacion("Revisa tu conexión a internet.", "error");
+        if (!localStorage.getItem(ADMIN_CACHE_KEY)) mostrarNotificacion("Revisa tu conexión a internet.", "error");
     }
+}
+
+function renderizarTodo(datos) {
+    renderizarDashboard(datos);
+    renderizarPedidos(datos.pedidos);
+    renderizarCalendario(); 
+    cambiarVistaInventario(); 
+    renderizarFinanzas(datos.finanzas);
 }
 
 function renderizarDashboard(datos) {
@@ -382,6 +408,8 @@ async function actualizarEstatusPedido(idPedido, nuevoEstado) {
         const pedido = datosGlobalesAdmin.pedidos.find(p => p.ID_Pedido === idPedido);
         if(pedido) {
             pedido.Estado = nuevoEstado;
+            // Guardar en caché el cambio al instante
+            localStorage.setItem(ADMIN_CACHE_KEY, JSON.stringify(datosGlobalesAdmin));
             renderizarDashboard(datosGlobalesAdmin);
         }
         renderizarCalendario();
@@ -419,7 +447,6 @@ function procesarImagenBase64(file) {
     });
 }
 
-// --- INVENTARIO CON SOPORTE ROBUSTO PARA FOTOS ANTIGUAS Y NUEVAS ---
 function cambiarVistaInventario() {
     const hojaSeleccionada = document.getElementById('selector-hoja-inv').value;
     const tbody = document.getElementById('tabla-inventario-body');
@@ -437,7 +464,6 @@ function cambiarVistaInventario() {
         const precio = item.Precio_Unitario !== undefined ? item.Precio_Unitario : (item.Precio || 0);
         const isChecked = String(item.Disponible).trim().toUpperCase() === "SI" ? "checked" : "";
         
-        // Soporta tanto la columna vieja 'Color_Hex' como la nueva 'Imagen_URL'
         const rawImagen = item.Imagen_URL || item.Color_Hex || "";
         let imgThumb = `<div class="w-12 h-12 rounded-lg border-2 border-dashed border-[#E8DCC4] flex items-center justify-center text-[10px] text-stone-400 font-bold bg-stone-50">S/F</div>`;
         
